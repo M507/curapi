@@ -57,9 +57,7 @@ func CreateModelList() ModelList {
 }
 
 func CreateModelListFrom(ids []string) ModelList {
-	if len(ids) == 0 {
-		ids = KnownCursorModels
-	}
+	ids = MergeModelIDs(ids)
 	now := nowUnix()
 	data := make([]Model, 0, len(ids))
 	for _, id := range ids {

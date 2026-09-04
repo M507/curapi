@@ -8,18 +8,24 @@ import (
 
 func TestExtractModel(t *testing.T) {
 	cases := map[string]string{
-		"cursor/opus-4.6":    "opus-4.6",
-		"cursor/":            "auto",
-		"cursor-opus-4.6":    "opus-4.6",
-		"cursor-unknown-foo": "unknown-foo",
-		"auto":               "auto",
-		"opus-4.6-thinking":  "opus-4.6-thinking",
-		"not-a-model":        "auto",
-		"":                   "auto",
-		"  gpt-5.2  ":        "gpt-5.2",
-		"composer-1":         "composer-2.5",
-		"grok":               "cursor-grok-4.6-high-fast",
-		"cursor/composer-1":  "composer-2.5",
+		"cursor/opus-4.6":           "opus-4.6",
+		"cursor/":                   "auto",
+		"cursor-opus-4.6":           "cursor-opus-4.6",
+		"cursor-unknown-foo":        "cursor-unknown-foo",
+		"auto":                      "auto",
+		"opus-4.6-thinking":         "opus-4.6-thinking",
+		"not-a-model":               "not-a-model",
+		"":                          "auto",
+		"  gpt-5.2  ":               "gpt-5.2",
+		"composer-1":                "composer-2.5",
+		"grok":                      "cursor-grok-4.6-high-fast",
+		"cursor/composer-1":         "composer-2.5",
+		"claude-opus-5-low":         "claude-opus-5-low",
+		"claude-opus-5-high":        "claude-opus-5-high",
+		"composer-2.5":              "composer-2.5",
+		"gpt-5.2":                   "gpt-5.2",
+		"gemini-3-flash":            "gemini-3-flash",
+		"cursor-grok-4.6-high-fast": "cursor-grok-4.6-high-fast",
 	}
 	for in, want := range cases {
 		if got := ExtractModel(in); got != want {
@@ -105,6 +111,32 @@ func TestCreateModelList(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing auto model")
+	}
+	foundClaude := false
+	for _, m := range list.Data {
+		if m.ID == "claude-opus-5-low" {
+			foundClaude = true
+		}
+	}
+	if !foundClaude {
+		t.Fatal("missing claude-opus-5-low")
+	}
+}
+
+func TestMergeModelIDsIncludesAliases(t *testing.T) {
+	got := MergeModelIDs([]string{"auto", "composer-2.5"})
+	want := map[string]bool{"auto": true, "composer-2.5": true, "composer-1": true, "composer-1.5": true, "grok": true}
+	for id := range want {
+		found := false
+		for _, g := range got {
+			if g == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %s in %v", id, got)
+		}
 	}
 }
 

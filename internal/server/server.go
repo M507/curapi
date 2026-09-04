@@ -59,6 +59,7 @@ func New(opts Options) *Server {
 		started: time.Now(),
 	}
 	s.cliVer.Store("unknown")
+	s.models.Store(openai.MergeModelIDs(nil))
 	handler := s.routes()
 	s.http = newHTTPServer(opts.Config.HTTPAddr(), handler)
 	if opts.Config.TLS {
@@ -262,6 +263,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ids, _ := s.models.Load().([]string)
+	if len(ids) == 0 {
+		s.refreshModels()
+		ids, _ = s.models.Load().([]string)
+	}
 	writeJSON(w, http.StatusOK, openai.CreateModelListFrom(ids))
 }
 
@@ -281,7 +286,7 @@ func (s *Server) refreshModels() {
 	if len(ids) == 0 {
 		return
 	}
-	s.models.Store(ids)
+	s.models.Store(openai.MergeModelIDs(ids))
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {

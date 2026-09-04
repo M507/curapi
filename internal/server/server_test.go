@@ -131,6 +131,88 @@ func TestChatValidatesMessages(t *testing.T) {
 	}
 }
 
+func TestChatPassesVariousModels(t *testing.T) {
+	models := []struct {
+		request string
+		cli     string
+	}{
+		{"auto", "auto"},
+		{"claude-opus-5-low", "claude-opus-5-low"},
+		{"claude-opus-5-high", "claude-opus-5-high"},
+		{"composer-2.5", "composer-2.5"},
+		{"composer-1", "composer-2.5"},
+		{"gpt-5.2", "gpt-5.2"},
+		{"gemini-3-flash", "gemini-3-flash"},
+		{"cursor-grok-4.6-high-fast", "cursor-grok-4.6-high-fast"},
+		{"grok", "cursor-grok-4.6-high-fast"},
+	}
+	for _, tc := range models {
+		t.Run(tc.request, func(t *testing.T) {
+			s, runner := newTestServer(t, true, []agent.Event{
+				{Type: agent.EventResult, Text: "ok", Model: tc.cli},
+			})
+			body := `{"model":"` + tc.request + `","messages":[{"role":"user","content":"Hi"}]}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+			}
+			if runner.opts.Model != tc.cli {
+				t.Fatalf("cli model %q, want %q", runner.opts.Model, tc.cli)
+			}
+		})
+	}
+}
+
+func TestResponsesPassesVariousModels(t *testing.T) {
+	models := []string{"auto", "claude-opus-5-low", "composer-2.5", "gpt-5.2", "gemini-3-flash"}
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			s, runner := newTestServer(t, true, []agent.Event{
+				{Type: agent.EventResult, Text: "ok", Model: model},
+			})
+			body := `{"model":"` + model + `","input":"ping"}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+			}
+			if runner.opts.Model != model {
+				t.Fatalf("cli model %q, want %q", runner.opts.Model, model)
+			}
+		})
+	}
+}
+
+func TestModelsListIncludesCurrentCLIModels(t *testing.T) {
+	s, _ := newTestServer(t, true, nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var list openai.ModelList
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"auto", "claude-opus-5-low", "composer-2.5", "gpt-5.2", "gemini-3-flash"}
+	have := map[string]bool{}
+	for _, m := range list.Data {
+		have[m.ID] = true
+	}
+	for _, id := range want {
+		if !have[id] {
+			t.Errorf("model list missing %s (got %d models)", id, len(list.Data))
+		}
+	}
+}
+
 func TestChatNonStream(t *testing.T) {
 	s, runner := newTestServer(t, true, []agent.Event{
 		{Type: agent.EventDelta, Text: "Hel"},
@@ -160,6 +242,9 @@ func TestChatNonStream(t *testing.T) {
 	if runner.opts.APIKey != "cursor-from-env" {
 		t.Fatalf("api key not forwarded from env.json")
 	}
+	if runner.opts.Model != "auto" {
+		t.Fatalf("cli model %q, want auto", runner.opts.Model)
+	}
 }
 
 func TestResponsesEndpoint(t *testing.T) {
@@ -186,6 +271,43 @@ func TestResponsesEndpoint(t *testing.T) {
 	}
 	if runner.prompt != "hello" {
 		t.Fatalf("prompt %q", runner.prompt)
+	}
+	if runner.opts.Model != "composer-2.5" {
+		t.Fatalf("cli model %q", runner.opts.Model)
+	}
+}
+
+func TestResponsesPassesChosenModel(t *testing.T) {
+	s, runner := newTestServer(t, true, []agent.Event{
+		{Type: agent.EventResult, Text: "ok", Model: "claude-opus-5-low"},
+	})
+	body := `{"model":"claude-opus-5-low","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if runner.opts.Model != "claude-opus-5-low" {
+		t.Fatalf("cli model %q, want claude-opus-5-low", runner.opts.Model)
+	}
+}
+
+func TestResponsesAutoStaysAuto(t *testing.T) {
+	s, runner := newTestServer(t, true, []agent.Event{
+		{Type: agent.EventResult, Text: "ok", Model: "auto"},
+	})
+	body := `{"model":"auto","input":"hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if runner.opts.Model != "auto" {
+		t.Fatalf("cli model %q, want auto", runner.opts.Model)
 	}
 }
 
