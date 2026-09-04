@@ -1,0 +1,10 @@
+bin/
+dist/
+node_modules/
+*.tsbuildinfo
+*.exe
+.env
+env.json
+.DS_Store
+coverage.out
+coverage.html
