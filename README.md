@@ -28,8 +28,8 @@ Headless? Skip `agent login`, generate a key at [cursor.com/settings](https://cu
 ## Build and run
 
 ```bash
-git clone https://github.com/tageecc/cursor-agent-api-proxy.git
-cd cursor-agent-api-proxy
+git clone https://github.com/M507/curapi.git
+cd curapi
 make build
 make test
 ./bin/curapi run
@@ -42,19 +42,17 @@ make install                 # copies to ~/.local/bin/curapi
 curapi install               # register OS service (refreshes if already installed)
 ```
 
-On first start, if no `env.json` exists, one is created at `~/.curapi/env.json` (mode `0600`) with a generated auth token. That token is printed once. An existing `~/.cursor-agent-api/` directory is migrated to `~/.curapi/` on install.
+On first start, if no `env.json` exists, one is created at `~/.curapi/env.json` (mode `0600`) with a generated auth token. That token is printed once.
 
 ## Configuration (`env.json`)
 
 All settings, including authorization tokens, live in a local JSON file. Search order:
 
 1. `--config /path/to/env.json`
-2. `CURAPI_ENV_FILE` (legacy: `CURSOR_AGENT_ENV_FILE`)
+2. `CURAPI_ENV_FILE`
 3. `./env.json` (current working directory)
 4. `~/.curapi/env.json`
-5. `~/.cursor-agent-api/env.json` (legacy)
-6. `/etc/curapi/env.json`
-7. `/etc/cursor-agent-api/env.json` (legacy)
+5. `/etc/curapi/env.json`
 
 If none exist, `~/.curapi/env.json` is created automatically.
 
@@ -141,6 +139,12 @@ curapi --help
 
 Flags: `--config path/to/env.json`, `--port 8080`.
 
+`curapi` lives in `~/.local/bin` after `make install`. If `curapi: command not found`, add that directory to `PATH` and open a new shell:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 Logs: `~/.curapi/server.log` (request id, method, path, status, duration). Authorization values are redacted.
 
 ## System service
@@ -154,7 +158,7 @@ curapi uninstall
 `install` and `reinstall` both:
 
 1. Stop a PID-file daemon if one is running
-2. Remove the previous OS unit if it exists (including the legacy `cursor-agent-api` unit)
+2. Remove the previous OS unit if it exists
 3. Copy the current binary to `~/.local/bin/curapi`
 4. Keep (or create) `~/.curapi/env.json`
 5. Write a fresh unit file and enable/start it
@@ -166,6 +170,46 @@ Platforms:
 - Windows → Task Scheduler (`CurAPI`)
 
 On Linux, for start-at-boot while not logged in: `loginctl enable-linger $USER`.
+
+### Check status
+
+`curapi status` only reports a process started with `curapi start` (PID file). After `curapi install`, check the OS service instead.
+
+**Is the API up?**
+
+```bash
+curl http://127.0.0.1:4646/health
+curl -k https://127.0.0.1:4647/health
+```
+
+**Linux (systemd user unit)**
+
+```bash
+systemctl --user status curapi
+systemctl --user is-active curapi
+journalctl --user -u curapi -n 50 --no-pager
+journalctl --user -u curapi -f
+```
+
+**macOS (LaunchAgent)**
+
+```bash
+launchctl print "gui/$(id -u)/com.curapi"
+```
+
+**Windows (Task Scheduler)**
+
+```powershell
+schtasks /Query /TN CurAPI /V /FO LIST
+```
+
+**Logs**
+
+```bash
+tail -f ~/.curapi/server.log
+```
+
+A healthy `/health` body looks like `{"status":"ok","provider":"curapi",...}`.
 
 ## Use with OpenClaw
 

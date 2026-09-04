@@ -61,14 +61,14 @@ func TestParseArgsErrors(t *testing.T) {
 
 func TestHelpAndVersion(t *testing.T) {
 	out := withIO(t)
-	if code := Execute([]string{"cursor-agent-api", "--help"}); code != 0 {
+	if code := Execute([]string{"curapi", "--help"}); code != 0 {
 		t.Fatalf("help exit %d", code)
 	}
 	if !strings.Contains(out.String(), "reinstall") {
 		t.Fatalf("help missing reinstall: %s", out.String())
 	}
 	out.Reset()
-	if code := Execute([]string{"cursor-agent-api", "version"}); code != 0 {
+	if code := Execute([]string{"curapi", "version"}); code != 0 {
 		t.Fatalf("version exit %d", code)
 	}
 	if !strings.Contains(out.String(), Version) {
@@ -78,7 +78,7 @@ func TestHelpAndVersion(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	out := withIO(t)
-	if code := Execute([]string{"cursor-agent-api", "nope"}); code != 1 {
+	if code := Execute([]string{"curapi", "nope"}); code != 1 {
 		t.Fatalf("exit %d output %s", code, out.String())
 	}
 }
@@ -106,7 +106,7 @@ func TestStatusWithoutServer(t *testing.T) {
 	if err := config.Write(env, src); err != nil {
 		t.Fatal(err)
 	}
-	code := Execute([]string{"cursor-agent-api", "--config", env, "status"})
+	code := Execute([]string{"curapi", "--config", env, "status"})
 	if code != 0 {
 		t.Fatalf("exit %d output %s", code, out.String())
 	}

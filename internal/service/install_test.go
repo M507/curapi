@@ -8,20 +8,20 @@ import (
 )
 
 func TestSystemdUnitOmitsSecrets(t *testing.T) {
-	unit := SystemdUnit("/opt/cursor-agent-api", "/home/u/.cursor-agent-api/env.json", "/usr/bin")
+	unit := SystemdUnit("/opt/curapi", "/home/u/.curapi/env.json", "/usr/bin")
 	if strings.Contains(unit, "CURSOR_API_KEY") || strings.Contains(unit, "authz") {
 		t.Fatal("secrets must not be inlined into the unit file")
 	}
 	if !strings.Contains(unit, "run --config") {
 		t.Fatalf("missing config flag:\n%s", unit)
 	}
-	if !strings.Contains(unit, "/home/u/.cursor-agent-api/env.json") {
+	if !strings.Contains(unit, "/home/u/.curapi/env.json") {
 		t.Fatal("missing env path")
 	}
 }
 
 func TestLaunchdPlistEscapes(t *testing.T) {
-	plist := LaunchdPlist("com.cursor-agent-api", `/tmp/a&b`, `/tmp/c<d>`, "PATH", `/tmp/log`)
+	plist := LaunchdPlist("com.curapi", `/tmp/a&b`, `/tmp/c<d>`, "PATH", `/tmp/log`)
 	if strings.Contains(plist, `<d>`) && !strings.Contains(plist, `&lt;`) {
 		t.Fatal("unescaped xml")
 	}

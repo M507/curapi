@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 )
 
@@ -61,9 +60,6 @@ func (i *Installer) installLinux() error {
 
 func (i *Installer) uninstallLinux() error {
 	i.disableSystemd(Name, i.Paths.SystemdUserUnit)
-	if LegacyName != Name && i.Paths.SystemdUserDir != "" {
-		i.disableSystemd(LegacyName, filepath.Join(i.Paths.SystemdUserDir, LegacyName+".service"))
-	}
 	_, _ = i.Exec("systemctl", "--user", "daemon-reload")
 	i.printf("Service uninstalled.\n")
 	return nil
@@ -102,11 +98,6 @@ func (i *Installer) uninstallDarwin() error {
 	if err := os.Remove(i.Paths.LaunchPlist); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if i.Home != "" && LegacyDarwinLabel != DarwinLabel {
-		legacy := filepath.Join(i.Home, "Library", "LaunchAgents", LegacyDarwinLabel+".plist")
-		_, _ = i.Exec("launchctl", "bootout", "gui/"+uid, legacy)
-		_ = os.Remove(legacy)
-	}
 	i.printf("Service uninstalled.\n")
 	return nil
 }
@@ -131,10 +122,6 @@ func (i *Installer) installWindows() error {
 func (i *Installer) uninstallWindows() error {
 	_, _ = i.Exec("schtasks", "/End", "/TN", WindowsTask)
 	_, _ = i.Exec("schtasks", "/Delete", "/TN", WindowsTask, "/F")
-	if LegacyWindowsTask != WindowsTask {
-		_, _ = i.Exec("schtasks", "/End", "/TN", LegacyWindowsTask)
-		_, _ = i.Exec("schtasks", "/Delete", "/TN", LegacyWindowsTask, "/F")
-	}
 	i.printf("Service uninstalled.\n")
 	return nil
 }

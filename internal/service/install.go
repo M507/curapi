@@ -13,12 +13,9 @@ import (
 )
 
 const (
-	Name              = config.AppName
-	LegacyName        = config.LegacyAppName
-	DarwinLabel       = "com." + config.AppName
-	LegacyDarwinLabel = "com." + config.LegacyAppName
-	WindowsTask       = "CurAPI"
-	LegacyWindowsTask = "CursorAgentAPI"
+	Name        = config.AppName
+	DarwinLabel = "com." + config.AppName
+	WindowsTask = "CurAPI"
 )
 
 // ExecRunner runs external commands (systemctl, launchctl, schtasks).
@@ -101,7 +98,6 @@ func (i *Installer) install(refresh bool) error {
 	if refresh {
 		_ = i.uninstallQuiet()
 	}
-	_ = i.migrateLegacyState()
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate executable: %w", err)
@@ -119,47 +115,10 @@ func (i *Installer) install(refresh bool) error {
 	if err := copyFile(exe, i.Paths.Binary, 0o755); err != nil {
 		return fmt.Errorf("install binary: %w", err)
 	}
-	if i.Paths.BinDir != "" {
-		legacyBin := filepath.Join(i.Paths.BinDir, LegacyName)
-		if legacyBin != i.Paths.Binary {
-			_ = os.Remove(legacyBin)
-		}
-	}
 	if err := i.ensureEnvFile(); err != nil {
 		return err
 	}
 	return i.installPlatform()
-}
-
-// migrateLegacyState moves ~/.cursor-agent-api to ~/.curapi when the new
-// directory does not already exist, and retargets env/log paths.
-func (i *Installer) migrateLegacyState() error {
-	if i.Home == "" {
-		return nil
-	}
-	legacy := filepath.Join(i.Home, "."+LegacyName)
-	dst := i.Paths.StateDir
-	if dst == "" || dst == legacy {
-		return nil
-	}
-	info, err := os.Stat(legacy)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	if _, err := os.Stat(dst); err == nil {
-		return nil
-	}
-	if err := os.Rename(legacy, dst); err != nil {
-		return err
-	}
-	legacyEnv := filepath.Join(legacy, "env.json")
-	if i.Paths.EnvFile == legacyEnv {
-		i.Paths.EnvFile = filepath.Join(dst, "env.json")
-	}
-	if i.Paths.LogFile == filepath.Join(legacy, "server.log") {
-		i.Paths.LogFile = filepath.Join(dst, "server.log")
-	}
-	return nil
 }
 
 func (i *Installer) ensureEnvFile() error {

@@ -15,7 +15,6 @@ import (
 
 const (
 	AppName          = "curapi"
-	LegacyAppName    = "cursor-agent-api"
 	DefaultPort      = 4646
 	DefaultTLSPort   = 4647
 	DefaultHost      = "127.0.0.1"
@@ -77,13 +76,6 @@ func StateDir() string {
 	return filepath.Join(os.TempDir(), "."+AppName)
 }
 
-func LegacyStateDir() string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, "."+LegacyAppName)
-	}
-	return filepath.Join(os.TempDir(), "."+LegacyAppName)
-}
-
 func DefaultEnvPath() string {
 	return filepath.Join(StateDir(), "env.json")
 }
@@ -98,20 +90,15 @@ func DefaultLogFile(stateDir string) string {
 
 // Candidates returns env.json search paths in priority order.
 func Candidates() []string {
-	out := make([]string, 0, 8)
-	for _, key := range []string{"CURAPI_ENV_FILE", "CURSOR_AGENT_ENV_FILE"} {
-		if p := strings.TrimSpace(os.Getenv(key)); p != "" {
-			out = append(out, p)
-		}
+	out := make([]string, 0, 4)
+	if p := strings.TrimSpace(os.Getenv("CURAPI_ENV_FILE")); p != "" {
+		out = append(out, p)
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		out = append(out, filepath.Join(cwd, "env.json"))
 	}
 	out = append(out, DefaultEnvPath())
-	if legacy := filepath.Join(LegacyStateDir(), "env.json"); legacy != DefaultEnvPath() {
-		out = append(out, legacy)
-	}
-	out = append(out, "/etc/"+AppName+"/env.json", "/etc/"+LegacyAppName+"/env.json")
+	out = append(out, "/etc/"+AppName+"/env.json")
 	return out
 }
 
