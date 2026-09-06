@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt install uninstall ensure-path
+.PHONY: build test vet fmt install uninstall ensure-path doctor
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -51,6 +51,9 @@ ensure-path:
 			echo "This shell: export PATH=\"$$bindir:\$$PATH\""; \
 		fi ;; \
 	esac
+
+doctor:
+	@bash scripts/curapi-doctor.sh
 
 uninstall:
 	-$(BINDIR)/curapi uninstall

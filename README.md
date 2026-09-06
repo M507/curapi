@@ -211,6 +211,17 @@ tail -f ~/.curapi/server.log
 
 A healthy `/health` body looks like `{"status":"ok","provider":"curapi",...}`.
 
+### Repair common issues
+
+```bash
+./scripts/curapi-doctor.sh --help
+./scripts/curapi-doctor.sh          # check and fix (restart, PATH, leftover unit, …)
+./scripts/curapi-doctor.sh --check  # report only
+make doctor
+```
+
+The script looks for a missing binary, `env.json` permissions, a leftover `cursor-agent-api` unit, a stale PID file, a down systemd service, and failing HTTP/HTTPS health checks. It restarts or reinstalls the service when that is enough to recover.
+
 ## Use with OpenClaw
 
 Provider type: **Custom Provider** (OpenAI-compatible)
