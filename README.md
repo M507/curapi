@@ -169,7 +169,7 @@ Platforms:
 - macOS → LaunchAgent (`~/Library/LaunchAgents/com.curapi.plist`)
 - Windows → Task Scheduler (`CurAPI`)
 
-On Linux, for start-at-boot while not logged in: `loginctl enable-linger $USER`.
+On Linux, `install` / `reinstall` also run `loginctl enable-linger $USER` so the systemd user manager (and curapi) stay up after SSH logout and at boot. `scripts/curapi-doctor.sh` checks and repairs this. To do it by hand: `loginctl enable-linger $USER`.
 
 ### Check status
 

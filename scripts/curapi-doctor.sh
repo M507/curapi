@@ -39,6 +39,7 @@ Checks:
   - leftover cursor-agent-api service/binary
   - stale PID file
   - systemd user unit installed, enabled, and running
+  - linger enabled (user services keep running after logout)
   - HTTP/HTTPS /health returns 200
   - ports 4646/4647 listening
   - Cursor CLI (agent) on PATH
@@ -296,6 +297,34 @@ ensure_service() {
 	fi
 }
 
+ensure_linger() {
+	if ! have_systemctl; then
+		return
+	fi
+	if ! command -v loginctl >/dev/null 2>&1; then
+		info "loginctl not found; skipping linger check"
+		return
+	fi
+	local who="${USER:-}"
+	if [ -z "$who" ]; then
+		who="$(id -un 2>/dev/null || echo root)"
+	fi
+	local linger
+	linger="$(loginctl show-user "$who" -p Linger 2>/dev/null || true)"
+	if [ "$linger" = "Linger=yes" ]; then
+		ok "linger enabled for ${who}"
+		return
+	fi
+	warn "linger is ${linger:-unknown} for ${who} (service stops on SSH logout)"
+	if want_fix; then
+		if loginctl enable-linger "$who"; then
+			did_fix "enabled linger for ${who}"
+		else
+			fail "could not enable linger for ${who}"
+		fi
+	fi
+}
+
 ensure_ports_and_health() {
 	local p
 	for p in 4646 4647; do
@@ -396,6 +425,7 @@ main() {
 	remove_legacy
 	clear_stale_pid
 	ensure_service
+	ensure_linger
 	ensure_ports_and_health
 	ensure_agent
 

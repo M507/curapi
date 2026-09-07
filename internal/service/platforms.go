@@ -48,6 +48,7 @@ func (i *Installer) installLinux() error {
 	if _, err := i.Exec("systemctl", "--user", "enable", "--now", Name); err != nil {
 		return fmt.Errorf("systemctl enable: %w", err)
 	}
+	i.enableLinger()
 	i.printf("Service installed and started.\n")
 	i.printf("  Binary: %s\n", i.Paths.Binary)
 	i.printf("  Config: %s\n", i.Paths.EnvFile)
@@ -56,6 +57,21 @@ func (i *Installer) installLinux() error {
 	i.printf("  Logs:   journalctl --user -u %s -f\n", Name)
 	i.printf("          also %s\n", i.Paths.LogFile)
 	return nil
+}
+
+func (i *Installer) enableLinger() {
+	who := os.Getenv("USER")
+	if who == "" {
+		who = os.Getenv("LOGNAME")
+	}
+	if who == "" {
+		who = "root"
+	}
+	if _, err := i.Exec("loginctl", "enable-linger", who); err != nil {
+		i.printf("  Note: could not enable linger for %s (%v). Without it the service stops on SSH logout.\n", who, err)
+		return
+	}
+	i.printf("  Linger: enabled for %s (stays running after logout)\n", who)
 }
 
 func (i *Installer) uninstallLinux() error {

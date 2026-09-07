@@ -83,6 +83,10 @@ func TestInstallRefreshLinux(t *testing.T) {
 	if enableCount < 2 {
 		t.Fatalf("expected enable on install and reinstall, got %d\n%s", enableCount, joined)
 	}
+	lingerCount := strings.Count(joined, "loginctl enable-linger")
+	if lingerCount < 2 {
+		t.Fatalf("expected loginctl enable-linger on install and reinstall, got %d\n%s", lingerCount, joined)
+	}
 
 	if err := inst.Uninstall(); err != nil {
 		t.Fatal(err)
