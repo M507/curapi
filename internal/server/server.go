@@ -483,7 +483,8 @@ func (s *Server) writeStream(w http.ResponseWriter, r *http.Request, reqID, mode
 				if ev.Model != "" {
 					lastModel = ev.Model
 				}
-				writeSSE(openai.CreateDoneChunk(reqID, lastModel))
+				usage := openai.ChatUsageFromAgent(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CacheReadTokens)
+				writeSSE(openai.CreateDoneChunkWithUsage(reqID, lastModel, usage))
 				_, _ = io.WriteString(w, "data: [DONE]\n\n")
 				flusher.Flush()
 			case agent.EventError:
@@ -523,7 +524,17 @@ func (s *Server) writeJSONCompletion(w http.ResponseWriter, reqID, model string,
 	if result.Model != "" {
 		useModel = result.Model
 	}
-	writeJSON(w, http.StatusOK, openai.CreateChatResponse(reqID, useModel, result.Text))
+	s.log.Info("chat usage", "id", reqID, "model", useModel,
+		"prompt_tokens", result.Usage.InputTokens,
+		"completion_tokens", result.Usage.OutputTokens,
+		"cached_tokens", result.Usage.CacheReadTokens,
+	)
+	writeJSON(w, http.StatusOK, openai.CreateChatResponseWithUsage(
+		reqID,
+		useModel,
+		result.Text,
+		openai.ChatUsageFromAgent(result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.CacheReadTokens),
+	))
 }
 
 func (s *Server) writeJSONResponse(w http.ResponseWriter, reqID, model string, events <-chan agent.Event) {
@@ -551,7 +562,17 @@ func (s *Server) writeJSONResponse(w http.ResponseWriter, reqID, model string, e
 	if result.Model != "" {
 		useModel = result.Model
 	}
-	writeJSON(w, http.StatusOK, openai.CreateResponsesResult(reqID, useModel, result.Text))
+	s.log.Info("responses usage", "id", reqID, "model", useModel,
+		"input_tokens", result.Usage.InputTokens,
+		"output_tokens", result.Usage.OutputTokens,
+		"cached_tokens", result.Usage.CacheReadTokens,
+	)
+	writeJSON(w, http.StatusOK, openai.CreateResponsesResultWithUsage(
+		reqID,
+		useModel,
+		result.Text,
+		openai.ResponsesUsageFromAgent(result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.CacheReadTokens),
+	))
 }
 
 func (s *Server) writeResponsesStream(w http.ResponseWriter, r *http.Request, reqID, model string, events <-chan agent.Event) {
@@ -578,6 +599,7 @@ func (s *Server) writeResponsesStream(w http.ResponseWriter, r *http.Request, re
 
 	lastModel := model
 	var full strings.Builder
+	var lastUsage agent.Usage
 	writeEvent(openai.ResponseStreamEvent{Type: "response.created"})
 	writeEvent(openai.ResponseStreamEvent{
 		Type: "response.output_item.added",
@@ -590,7 +612,12 @@ func (s *Server) writeResponsesStream(w http.ResponseWriter, r *http.Request, re
 			return
 		case ev, ok := <-events:
 			if !ok {
-				res := openai.CreateResponsesResult(reqID, lastModel, full.String())
+				res := openai.CreateResponsesResultWithUsage(
+					reqID,
+					lastModel,
+					full.String(),
+					openai.ResponsesUsageFromAgent(lastUsage.InputTokens, lastUsage.OutputTokens, lastUsage.CacheReadTokens),
+				)
 				writeEvent(openai.ResponsesCompleted(res))
 				_, _ = io.WriteString(w, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -610,10 +637,16 @@ func (s *Server) writeResponsesStream(w http.ResponseWriter, r *http.Request, re
 				if ev.Model != "" {
 					lastModel = ev.Model
 				}
+				lastUsage = ev.Usage
 				if ev.Text != "" && full.Len() == 0 {
 					full.WriteString(ev.Text)
 				}
-				res := openai.CreateResponsesResult(reqID, lastModel, full.String())
+				res := openai.CreateResponsesResultWithUsage(
+					reqID,
+					lastModel,
+					full.String(),
+					openai.ResponsesUsageFromAgent(ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.CacheReadTokens),
+				)
 				writeEvent(openai.ResponsesCompleted(res))
 				_, _ = io.WriteString(w, "data: [DONE]\n\n")
 				flusher.Flush()

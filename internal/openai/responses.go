@@ -40,9 +40,19 @@ type ResponseTextPart struct {
 }
 
 type ResponseUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens         int                  `json:"input_tokens"`
+	InputTokensDetails  *InputTokensDetails  `json:"input_tokens_details,omitempty"`
+	OutputTokens        int                  `json:"output_tokens"`
+	OutputTokensDetails *OutputTokensDetails `json:"output_tokens_details,omitempty"`
+	TotalTokens         int                  `json:"total_tokens"`
+}
+
+type InputTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+type OutputTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 type ResponseStreamEvent struct {
@@ -208,6 +218,10 @@ func parseImageURLJSON(raw json.RawMessage) string {
 }
 
 func CreateResponsesResult(requestID, model, text string) ResponsesResult {
+	return CreateResponsesResultWithUsage(requestID, model, text, ResponseUsage{})
+}
+
+func CreateResponsesResultWithUsage(requestID, model, text string, usage ResponseUsage) ResponsesResult {
 	msgID := fmt.Sprintf("msg_%s", requestID)
 	return ResponsesResult{
 		ID:        fmt.Sprintf("resp_%s", requestID),
@@ -226,8 +240,21 @@ func CreateResponsesResult(requestID, model, text string) ResponsesResult {
 				Annotations: []any{},
 			}},
 		}},
-		Usage: ResponseUsage{},
+		Usage: usage,
 	}
+}
+
+// ResponsesUsageFromAgent maps Cursor CLI token counts into Responses API usage.
+func ResponsesUsageFromAgent(inputTokens, outputTokens, cacheReadTokens int) ResponseUsage {
+	u := ResponseUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  inputTokens + outputTokens,
+	}
+	if cacheReadTokens > 0 {
+		u.InputTokensDetails = &InputTokensDetails{CachedTokens: cacheReadTokens}
+	}
+	return u
 }
 
 func ResponsesTextDelta(delta string) ResponseStreamEvent {

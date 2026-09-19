@@ -24,7 +24,7 @@ func TestParserIncrementalAndDedup(t *testing.T) {
 	p.HandleLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"Hel"}]}}`, emit)
 	p.HandleLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}`, emit)
 	p.HandleLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}`, emit)
-	p.HandleLine(`{"type":"result","result":"Hello"}`, emit)
+	p.HandleLine(`{"type":"result","result":"Hello","usage":{"inputTokens":100,"outputTokens":12,"cacheReadTokens":40,"cacheWriteTokens":0}}`, emit)
 
 	if !p.GotResult {
 		t.Fatal("expected result")
@@ -40,6 +40,9 @@ func TestParserIncrementalAndDedup(t *testing.T) {
 	}
 	if events[2].Type != EventResult || events[2].Text != "Hello" || events[2].Model != "gpt-5.2" {
 		t.Fatalf("result = %#v", events[2])
+	}
+	if events[2].Usage.InputTokens != 100 || events[2].Usage.OutputTokens != 12 || events[2].Usage.CacheReadTokens != 40 {
+		t.Fatalf("usage = %#v", events[2].Usage)
 	}
 }
 

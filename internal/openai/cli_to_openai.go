@@ -23,7 +23,11 @@ func CreateStreamChunk(requestID, model, text string, isFirst bool) ChatChunk {
 }
 
 func CreateDoneChunk(requestID, model string) ChatChunk {
-	return ChatChunk{
+	return CreateDoneChunkWithUsage(requestID, model, Usage{})
+}
+
+func CreateDoneChunkWithUsage(requestID, model string, usage Usage) ChatChunk {
+	chunk := ChatChunk{
 		ID:      chatID(requestID),
 		Object:  "chat.completion.chunk",
 		Created: nowUnix(),
@@ -34,9 +38,17 @@ func CreateDoneChunk(requestID, model string) ChatChunk {
 			FinishReason: &stopReason,
 		}},
 	}
+	if usage.TotalTokens > 0 || usage.PromptTokens > 0 || usage.CompletionTokens > 0 {
+		chunk.Usage = &usage
+	}
+	return chunk
 }
 
 func CreateChatResponse(requestID, model, text string) ChatResponse {
+	return CreateChatResponseWithUsage(requestID, model, text, Usage{})
+}
+
+func CreateChatResponseWithUsage(requestID, model, text string, usage Usage) ChatResponse {
 	msg := AssistantMessage(text)
 	return ChatResponse{
 		ID:      chatID(requestID),
@@ -48,8 +60,21 @@ func CreateChatResponse(requestID, model, text string) ChatResponse {
 			Message:      msg,
 			FinishReason: &stopReason,
 		}},
-		Usage: Usage{},
+		Usage: usage,
 	}
+}
+
+// ChatUsageFromAgent maps Cursor CLI token counts into Chat Completions usage.
+func ChatUsageFromAgent(inputTokens, outputTokens, cacheReadTokens int) Usage {
+	u := Usage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      inputTokens + outputTokens,
+	}
+	if cacheReadTokens > 0 {
+		u.PromptTokensDetails = &PromptTokensDetails{CachedTokens: cacheReadTokens}
+	}
+	return u
 }
 
 func CreateModelList() ModelList {

@@ -375,6 +375,51 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsIncludesUsage(t *testing.T) {
+	s, _ := newTestServer(t, true, []agent.Event{
+		{Type: agent.EventResult, Text: "Hello", Model: "auto", Usage: agent.Usage{InputTokens: 50, OutputTokens: 7, CacheReadTokens: 3}},
+	})
+	body := `{"model":"auto","messages":[{"role":"user","content":"Hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp openai.ChatResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage.PromptTokens != 50 || resp.Usage.CompletionTokens != 7 || resp.Usage.TotalTokens != 57 {
+		t.Fatalf("usage %#v", resp.Usage)
+	}
+	if resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens != 3 {
+		t.Fatalf("cached %#v", resp.Usage.PromptTokensDetails)
+	}
+}
+
+func TestResponsesIncludesUsage(t *testing.T) {
+	s, _ := newTestServer(t, true, []agent.Event{
+		{Type: agent.EventResult, Text: "Hello", Model: "auto", Usage: agent.Usage{InputTokens: 11, OutputTokens: 2}},
+	})
+	body := `{"model":"auto","input":"hi"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp openai.ResponsesResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Usage.InputTokens != 11 || resp.Usage.OutputTokens != 2 || resp.Usage.TotalTokens != 13 {
+		t.Fatalf("usage %#v", resp.Usage)
+	}
+}
+
 func TestChatWithImageAttachment(t *testing.T) {
 	s, runner := newTestServer(t, true, []agent.Event{
 		{Type: agent.EventResult, Text: "labeled", Model: "auto"},

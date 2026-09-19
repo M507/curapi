@@ -96,6 +96,18 @@ func TestCreateStreamAndChat(t *testing.T) {
 	if resp.Choices[0].Message.Text() != "Hello" {
 		t.Fatalf("%+v", resp)
 	}
+	usage := ChatUsageFromAgent(8021, 30, 1152)
+	resp = CreateChatResponseWithUsage("abc", "auto", "Hello", usage)
+	if resp.Usage.PromptTokens != 8021 || resp.Usage.CompletionTokens != 30 || resp.Usage.TotalTokens != 8051 {
+		t.Fatalf("usage %#v", resp.Usage)
+	}
+	if resp.Usage.PromptTokensDetails == nil || resp.Usage.PromptTokensDetails.CachedTokens != 1152 {
+		t.Fatalf("cached %#v", resp.Usage.PromptTokensDetails)
+	}
+	doneWithUsage := CreateDoneChunkWithUsage("abc", "auto", usage)
+	if doneWithUsage.Usage == nil || doneWithUsage.Usage.TotalTokens != 8051 {
+		t.Fatalf("done chunk usage %#v", doneWithUsage.Usage)
+	}
 }
 
 func TestCreateModelList(t *testing.T) {
@@ -222,6 +234,14 @@ func TestCreateResponsesResult(t *testing.T) {
 	}
 	if res.Output[0].Content[0].Text != "Hello" {
 		t.Fatalf("%+v", res)
+	}
+	usage := ResponsesUsageFromAgent(100, 20, 8)
+	res = CreateResponsesResultWithUsage("abc", "composer-1", "Hello", usage)
+	if res.Usage.InputTokens != 100 || res.Usage.OutputTokens != 20 || res.Usage.TotalTokens != 120 {
+		t.Fatalf("%#v", res.Usage)
+	}
+	if res.Usage.InputTokensDetails == nil || res.Usage.InputTokensDetails.CachedTokens != 8 {
+		t.Fatalf("%#v", res.Usage.InputTokensDetails)
 	}
 }
 

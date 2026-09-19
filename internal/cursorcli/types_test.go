@@ -18,9 +18,12 @@ func TestParseAndClassify(t *testing.T) {
 		t.Fatalf("%+v %v", tool, err)
 	}
 
-	res, err := ParseLine([]byte(`{"type":"result","result":"done"}`))
+	res, err := ParseLine([]byte(`{"type":"result","result":"done","usage":{"inputTokens":10,"outputTokens":3,"cacheReadTokens":2,"cacheWriteTokens":1}}`))
 	if err != nil || !res.IsResult() || res.Result != "done" {
 		t.Fatalf("%+v %v", res, err)
+	}
+	if res.Usage == nil || res.Usage.InputTokens != 10 || res.Usage.OutputTokens != 3 || res.Usage.CacheReadTokens != 2 || res.Usage.CacheWriteTokens != 1 {
+		t.Fatalf("usage %+v", res.Usage)
 	}
 }
 

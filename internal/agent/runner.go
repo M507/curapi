@@ -32,7 +32,36 @@ type Event struct {
 	Type  EventType
 	Text  string
 	Model string
+	Usage Usage
 	Err   error
+}
+
+// Usage is OpenAI-oriented token accounting derived from the Cursor CLI.
+type Usage struct {
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+func (u Usage) Total() int {
+	return u.InputTokens + u.OutputTokens
+}
+
+func (u Usage) IsZero() bool {
+	return u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0
+}
+
+func usageFromCLI(u *cursorcli.Usage) Usage {
+	if u == nil {
+		return Usage{}
+	}
+	return Usage{
+		InputTokens:      u.InputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheReadTokens:  u.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens,
+	}
 }
 
 type Options struct {
@@ -413,7 +442,7 @@ func (p *Parser) handle(msg cursorcli.Message, emit func(Event)) {
 		p.turnBuffer = ""
 	case msg.IsResult():
 		p.GotResult = true
-		emit(Event{Type: EventResult, Text: msg.Result, Model: p.model})
+		emit(Event{Type: EventResult, Text: msg.Result, Model: p.model, Usage: usageFromCLI(msg.Usage)})
 	}
 }
 

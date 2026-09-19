@@ -14,7 +14,16 @@ type Message struct {
 	Model   string          `json:"model,omitempty"`
 	Result  string          `json:"result,omitempty"`
 	Message *AssistantBody  `json:"message,omitempty"`
+	Usage   *Usage          `json:"usage,omitempty"`
 	Raw     json.RawMessage `json:"-"`
+}
+
+// Usage is the token accounting from a Cursor CLI result event.
+type Usage struct {
+	InputTokens      int `json:"inputTokens"`
+	OutputTokens     int `json:"outputTokens"`
+	CacheReadTokens  int `json:"cacheReadTokens"`
+	CacheWriteTokens int `json:"cacheWriteTokens"`
 }
 
 type AssistantBody struct {
