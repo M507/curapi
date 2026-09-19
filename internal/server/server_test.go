@@ -373,7 +373,7 @@ func TestCORSPreflight(t *testing.T) {
 
 func TestChatAgentError(t *testing.T) {
 	s, _ := newTestServer(t, true, []agent.Event{
-		{Type: agent.EventError, Err: errors.New("boom")},
+		{Type: agent.EventError, Err: errors.New("agent exited: exit status 1: You've hit your usage limit")},
 	})
 	body := `{"messages":[{"role":"user","content":"Hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -382,6 +382,9 @@ func TestChatAgentError(t *testing.T) {
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "You've hit your usage limit") {
+		t.Fatalf("client body missing stderr detail: %s", rec.Body.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -150,6 +151,72 @@ func TestCLIRunnerWithFakeBinary(t *testing.T) {
 	}
 	if result.Text != "Hi" || result.Model != "test-model" {
 		t.Fatalf("result = %#v events=%#v", result, got)
+	}
+}
+
+func TestCLIRunnerIncludesStderrOnExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fake agent")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agent")
+	script := "#!/bin/sh\n" +
+		"cat >/dev/null\n" +
+		"echo 'ActionRequiredError: You have hit your usage limit Switch to a different model.' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRunner(logger.Discard())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ch := r.Run(ctx, "hello", Options{Bin: bin, Model: "auto"})
+	var errEv *Event
+	for ev := range ch {
+		if ev.Type == EventError {
+			copyEv := ev
+			errEv = &copyEv
+		}
+	}
+	if errEv == nil {
+		t.Fatal("expected error event")
+	}
+	msg := errEv.Err.Error()
+	if !strings.Contains(msg, "agent exited:") {
+		t.Fatalf("missing exit wrapper: %q", msg)
+	}
+	if !strings.Contains(msg, "You have hit your usage limit") {
+		t.Fatalf("stderr detail missing from client error: %q", msg)
+	}
+	if strings.Contains(msg, "ActionRequiredError:") {
+		t.Fatalf("should strip ActionRequiredError prefix: %q", msg)
+	}
+}
+
+func TestPickStderrDetail(t *testing.T) {
+	if got := pickStderrDetail(nil); got != "" {
+		t.Fatalf("empty: %q", got)
+	}
+	if got := pickStderrDetail([]string{"noise", "ActionRequiredError: Request blocked Try a less sensitive prompt."}); got != "Request blocked Try a less sensitive prompt." {
+		t.Fatalf("prefer ActionRequiredError: %q", got)
+	}
+	if got := pickStderrDetail([]string{"info only", "SomeError: boom", "trailing noise"}); got != "SomeError: boom" {
+		t.Fatalf("prefer named error over trailing noise: %q", got)
+	}
+	if got := pickStderrDetail([]string{"first", "last reason"}); got != "last reason" {
+		t.Fatalf("fallback last line: %q", got)
+	}
+}
+
+func TestAgentExitError(t *testing.T) {
+	base := errors.New("exit status 1")
+	if got := agentExitError(base, nil).Error(); got != "agent exited: exit status 1" {
+		t.Fatalf("%q", got)
+	}
+	got := agentExitError(base, []string{"ActionRequiredError: limit hit"}).Error()
+	if got != "agent exited: exit status 1: limit hit" {
+		t.Fatalf("%q", got)
 	}
 }
 

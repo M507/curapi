@@ -121,11 +121,19 @@ func (r *CLIRunner) execute(ctx context.Context, prompt string, opts Options, ou
 		return
 	}
 
-	var wg sync.WaitGroup
+	var (
+		wg          sync.WaitGroup
+		stderrMu    sync.Mutex
+		stderrLines []string
+	)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.drainStderr(stderr)
+		r.drainStderr(stderr, func(line string) {
+			stderrMu.Lock()
+			stderrLines = append(stderrLines, line)
+			stderrMu.Unlock()
+		})
 	}()
 
 	parser := NewParser(r.Log)
@@ -143,7 +151,10 @@ func (r *CLIRunner) execute(ctx context.Context, prompt string, opts Options, ou
 		return
 	}
 	if waitErr != nil && ctx.Err() == nil && !parser.GotResult {
-		r.emit(ctx, out, Event{Type: EventError, Err: fmt.Errorf("agent exited: %w", waitErr)})
+		stderrMu.Lock()
+		lines := append([]string(nil), stderrLines...)
+		stderrMu.Unlock()
+		r.emit(ctx, out, Event{Type: EventError, Err: agentExitError(waitErr, lines)})
 	}
 }
 
@@ -160,7 +171,7 @@ func (r *CLIRunner) emit(ctx context.Context, out chan Event, ev Event) {
 	}
 }
 
-func (r *CLIRunner) drainStderr(stderr io.Reader) {
+func (r *CLIRunner) drainStderr(stderr io.Reader, onLine func(string)) {
 	sc := bufio.NewScanner(stderr)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -172,6 +183,68 @@ func (r *CLIRunner) drainStderr(stderr io.Reader) {
 			line = line[:500]
 		}
 		r.Log.Warn("agent stderr", "line", line)
+		if onLine != nil {
+			onLine(line)
+		}
+	}
+}
+
+// agentExitError builds a client-visible error that includes the useful stderr
+// detail (e.g. usage limits or provider policy blocks) when available.
+func agentExitError(waitErr error, stderrLines []string) error {
+	detail := pickStderrDetail(stderrLines)
+	if detail == "" {
+		return fmt.Errorf("agent exited: %w", waitErr)
+	}
+	return fmt.Errorf("agent exited: %w: %s", waitErr, detail)
+}
+
+func pickStderrDetail(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	var (
+		actionRequired string
+		namedError     string
+	)
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "ActionRequiredError:"):
+			actionRequired = cleanStderrLine(line)
+		case namedError == "" && looksLikeAgentError(line):
+			namedError = cleanStderrLine(line)
+		}
+	}
+	if actionRequired != "" {
+		return actionRequired
+	}
+	if namedError != "" {
+		return namedError
+	}
+	return cleanStderrLine(lines[len(lines)-1])
+}
+
+func cleanStderrLine(line string) string {
+	line = strings.TrimSpace(line)
+	if _, after, ok := strings.Cut(line, "ActionRequiredError:"); ok {
+		line = strings.TrimSpace(after)
+	}
+	return line
+}
+
+func looksLikeAgentError(line string) bool {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.Contains(line, "Error:"):
+		return true
+	case strings.Contains(lower, "usage limit"):
+		return true
+	case strings.Contains(lower, "request blocked"):
+		return true
+	case strings.Contains(lower, "rate limit"):
+		return true
+	default:
+		return false
 	}
 }
 
