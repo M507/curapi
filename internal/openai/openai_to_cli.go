@@ -257,8 +257,9 @@ func MergeModelIDs(ids []string) []string {
 }
 
 type CLIInput struct {
-	Prompt string
-	Model  string
+	Prompt    string
+	Model     string
+	ImageURLs []string // original data:/http(s) URLs from the request (not yet on disk)
 }
 
 // ExtractModel resolves an OpenAI-style model string to a Cursor CLI model.
@@ -332,7 +333,8 @@ func OpenAIToCLI(req ChatRequest) CLIInput {
 		model = "auto"
 	}
 	return CLIInput{
-		Prompt: MessagesToPrompt(req.Messages),
-		Model:  ExtractModel(model),
+		Prompt:    MessagesToPrompt(req.Messages),
+		Model:     ExtractModel(model),
+		ImageURLs: ImageURLsFromMessages(req.Messages),
 	}
 }

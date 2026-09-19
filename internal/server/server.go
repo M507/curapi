@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/tageecc/cursor-agent-api-proxy/internal/agent"
 	"github.com/tageecc/cursor-agent-api-proxy/internal/auth"
 	"github.com/tageecc/cursor-agent-api-proxy/internal/config"
+	"github.com/tageecc/cursor-agent-api-proxy/internal/media"
 	"github.com/tageecc/cursor-agent-api-proxy/internal/openai"
 	"github.com/tageecc/cursor-agent-api-proxy/internal/tlsutil"
 )
@@ -30,6 +32,7 @@ type Server struct {
 	log     *slog.Logger
 	auth    auth.Authenticator
 	runner  agent.Runner
+	media   *media.Store
 	http    *http.Server
 	https   *http.Server
 	models  atomic.Value
@@ -42,6 +45,7 @@ type Options struct {
 	Log    *slog.Logger
 	Runner agent.Runner
 	Auth   auth.Authenticator
+	Media  *media.Store
 }
 
 func New(opts Options) *Server {
@@ -51,11 +55,15 @@ func New(opts Options) *Server {
 	if opts.Runner == nil {
 		opts.Runner = agent.NewRunner(opts.Log)
 	}
+	if opts.Media == nil {
+		opts.Media = media.NewStore(filepath.Join(opts.Config.StateDir, "attachments"))
+	}
 	s := &Server{
 		cfg:     opts.Config,
 		log:     opts.Log,
 		auth:    opts.Auth,
 		runner:  opts.Runner,
+		media:   opts.Media,
 		started: time.Now(),
 	}
 	s.cliVer.Store("unknown")
@@ -315,16 +323,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cli := openai.OpenAIToCLI(req)
-	s.log.Info("chat", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream)
+	prompt, images, cleanup, err := s.preparePrompt(reqID, cli)
+	if err != nil {
+		s.log.Error("attachments", "id", reqID, "err", err)
+		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_image"))
+		return
+	}
+	defer cleanup()
+
+	s.log.Info("chat", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(images))
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeoutMS)*time.Millisecond)
 	defer cancel()
 
-	events := s.runner.Run(ctx, cli.Prompt, agent.Options{
+	events := s.runner.Run(ctx, prompt, agent.Options{
 		Model:   cli.Model,
 		APIKey:  s.cfg.CursorAPIKey,
 		Bin:     s.cfg.AgentBin,
 		Timeout: time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
+		Images:  images,
 	})
 
 	if req.Stream {
@@ -356,15 +373,24 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cli := openai.OpenAIToCLI(chat)
-	s.log.Info("responses", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream)
+	prompt, images, cleanup, err := s.preparePrompt(reqID, cli)
+	if err != nil {
+		s.log.Error("attachments", "id", reqID, "err", err)
+		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_image"))
+		return
+	}
+	defer cleanup()
+
+	s.log.Info("responses", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(images))
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeoutMS)*time.Millisecond)
 	defer cancel()
-	events := s.runner.Run(ctx, cli.Prompt, agent.Options{
+	events := s.runner.Run(ctx, prompt, agent.Options{
 		Model:   cli.Model,
 		APIKey:  s.cfg.CursorAPIKey,
 		Bin:     s.cfg.AgentBin,
 		Timeout: time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
+		Images:  images,
 	})
 	if req.Stream {
 		s.writeResponsesStream(w, r, reqID, cli.Model, events)
@@ -586,6 +612,25 @@ func (s *Server) writeResponsesStream(w http.ResponseWriter, r *http.Request, re
 type ctxKey int
 
 const ctxKeyRequestID ctxKey = 1
+
+func (s *Server) preparePrompt(reqID string, cli openai.CLIInput) (prompt string, images []string, cleanup func(), err error) {
+	cleanup = func() {}
+	prompt = cli.Prompt
+	if len(cli.ImageURLs) == 0 {
+		return prompt, nil, cleanup, nil
+	}
+	if s.media == nil {
+		return "", nil, cleanup, fmt.Errorf("image attachments are not configured")
+	}
+	sess, err := s.media.Materialize(reqID, cli.ImageURLs)
+	if err != nil {
+		return "", nil, cleanup, fmt.Errorf("failed to materialize image attachment: %w", err)
+	}
+	cleanup = sess.Cleanup
+	prompt = openai.AppendImagePaths(cli.Prompt, sess.Paths)
+	s.log.Info("attachments ready", "id", reqID, "count", len(sess.Paths), "dir", sess.Dir)
+	return prompt, sess.Paths, cleanup, nil
+}
 
 func requestIDFrom(ctx context.Context) string {
 	if v, ok := ctx.Value(ctxKeyRequestID).(string); ok {

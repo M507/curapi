@@ -261,6 +261,8 @@ Client  →  POST /v1/chat/completions (OpenAI format + Bearer token)
         →  AI response → OpenAI format → Client
 ```
 
+Image attachments (`image_url` / Responses `input_image`, including `data:` URLs) are written under `~/.curapi/attachments/`, referenced in the CLI prompt, and passed with `--image`. Temp files are deleted when the request finishes.
+
 ## Development
 
 ```bash

@@ -42,6 +42,9 @@ type Options struct {
 	CWD     string
 	Timeout time.Duration
 	Env     []string
+	// Images are absolute paths passed to the CLI via repeated --image flags
+	// (headless attachment) in addition to being referenced in the prompt.
+	Images []string
 }
 
 type Runner interface {
@@ -257,6 +260,13 @@ func buildArgs(opts Options) []string {
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+	for _, img := range opts.Images {
+		img = strings.TrimSpace(img)
+		if img == "" {
+			continue
+		}
+		args = append(args, "--image", img)
 	}
 	return args
 }

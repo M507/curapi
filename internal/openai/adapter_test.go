@@ -177,6 +177,44 @@ func TestResponsesInputMessages(t *testing.T) {
 	}
 }
 
+func TestResponsesInputWithImage(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"type":"message","role":"user","content":[
+			{"type":"input_text","text":"label each 3x3"},
+			{"type":"input_image","image_url":"data:image/png;base64,aaa"}
+		]}
+	]`)
+	req := ResponsesRequest{Model: "cursor-grok-4.6-low-fast", Input: raw}
+	chat, err := req.ToChatRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := OpenAIToCLI(chat)
+	if cli.Prompt != "label each 3x3" {
+		t.Fatalf("prompt %q", cli.Prompt)
+	}
+	if len(cli.ImageURLs) != 1 || cli.ImageURLs[0] != "data:image/png;base64,aaa" {
+		t.Fatalf("images %#v", cli.ImageURLs)
+	}
+	withPaths := AppendImagePaths(cli.Prompt, []string{"/tmp/img.png"})
+	if !strings.Contains(withPaths, "label each 3x3") || !strings.Contains(withPaths, "/tmp/img.png") {
+		t.Fatalf("%q", withPaths)
+	}
+}
+
+func TestImageURLsFromChatCompletions(t *testing.T) {
+	raw, _ := json.Marshal([]ContentPart{
+		{Type: "text", Text: "see this"},
+		{Type: "image_url", ImageURL: &struct {
+			URL string `json:"url"`
+		}{URL: "data:image/jpeg;base64,xx"}},
+	})
+	urls := ImageURLsFromMessages([]ChatMessage{{Role: "user", Content: raw}})
+	if len(urls) != 1 || !strings.HasPrefix(urls[0], "data:image/jpeg") {
+		t.Fatalf("%v", urls)
+	}
+}
+
 func TestCreateResponsesResult(t *testing.T) {
 	res := CreateResponsesResult("abc", "composer-1", "Hello")
 	if res.Object != "response" || res.Status != "completed" {

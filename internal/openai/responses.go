@@ -101,18 +101,31 @@ func (r ResponsesRequest) ToChatRequest() (ChatRequest, error) {
 		switch typ {
 		case "function_call", "function_call_output", "reasoning":
 			continue
+		case "input_image":
+			// Top-level image item (rare); treat as a user turn with only the image.
+			if url := imageURLFromAny(item); url != "" {
+				raw, err := marshalMessageContent("", []string{url})
+				if err != nil {
+					return ChatRequest{}, err
+				}
+				msgs = append(msgs, ChatMessage{Role: "user", Content: raw})
+			}
+			continue
 		}
 		if role == "developer" {
 			role = "system"
 		}
-		text := extractInputText(item["content"])
-		if text == "" {
-			text = extractInputText(item["text"])
+		text, images := extractInputParts(item["content"])
+		if text == "" && len(images) == 0 {
+			text, images = extractInputParts(item["text"])
 		}
-		if text == "" {
+		if text == "" && len(images) == 0 {
 			continue
 		}
-		raw, _ := json.Marshal(text)
+		raw, err := marshalMessageContent(text, images)
+		if err != nil {
+			return ChatRequest{}, err
+		}
 		msgs = append(msgs, ChatMessage{Role: role, Content: raw})
 	}
 	if len(msgs) == 0 {
@@ -122,16 +135,21 @@ func (r ResponsesRequest) ToChatRequest() (ChatRequest, error) {
 }
 
 func extractInputText(raw json.RawMessage) string {
+	text, _ := extractInputParts(raw)
+	return text
+}
+
+func extractInputParts(raw json.RawMessage) (text string, images []string) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+		return s, nil
 	}
 	var parts []map[string]any
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return ""
+		return "", nil
 	}
 	var b strings.Builder
 	for _, p := range parts {
@@ -141,9 +159,52 @@ func extractInputText(raw json.RawMessage) string {
 			if t, ok := p["text"].(string); ok {
 				b.WriteString(t)
 			}
+		case "input_image", "image_url":
+			if u := imageURLFromMap(p); u != "" {
+				images = append(images, u)
+			}
 		}
 	}
-	return b.String()
+	return b.String(), images
+}
+
+func imageURLFromAny(item map[string]json.RawMessage) string {
+	if v, ok := item["image_url"]; ok {
+		return parseImageURLJSON(v)
+	}
+	if v, ok := item["imageUrl"]; ok {
+		return parseImageURLJSON(v)
+	}
+	return ""
+}
+
+func imageURLFromMap(p map[string]any) string {
+	if u, ok := p["image_url"].(string); ok {
+		return strings.TrimSpace(u)
+	}
+	if m, ok := p["image_url"].(map[string]any); ok {
+		if u, ok := m["url"].(string); ok {
+			return strings.TrimSpace(u)
+		}
+	}
+	if u, ok := p["url"].(string); ok {
+		return strings.TrimSpace(u)
+	}
+	return ""
+}
+
+func parseImageURLJSON(raw json.RawMessage) string {
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return strings.TrimSpace(asString)
+	}
+	var obj struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return strings.TrimSpace(obj.URL)
+	}
+	return ""
 }
 
 func CreateResponsesResult(requestID, model, text string) ResponsesResult {

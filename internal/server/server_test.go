@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -46,6 +48,7 @@ func newTestServer(t *testing.T, required bool, events []agent.Event) (*Server, 
 	cfg.AuthzTokens = []string{"test-token"}
 	cfg.SkipCLICheck = true
 	cfg.CursorAPIKey = "cursor-from-env"
+	cfg.StateDir = t.TempDir()
 	runner := &eventRunner{events: events}
 	s := New(Options{
 		Config: cfg,
@@ -368,6 +371,46 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") == "" {
 		t.Fatal("missing CORS")
+	}
+}
+
+func TestChatWithImageAttachment(t *testing.T) {
+	s, runner := newTestServer(t, true, []agent.Event{
+		{Type: agent.EventResult, Text: "labeled", Model: "auto"},
+	})
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	parts, _ := json.Marshal([]openai.ContentPart{
+		{Type: "text", Text: "label each 3x3"},
+		{Type: "image_url", ImageURL: &struct {
+			URL string `json:"url"`
+		}{URL: dataURL}},
+	})
+	bodyObj := map[string]any{
+		"model": "auto",
+		"messages": []map[string]any{
+			{"role": "user", "content": json.RawMessage(parts)},
+		},
+	}
+	body, _ := json.Marshal(bodyObj)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(runner.prompt, "label each 3x3") {
+		t.Fatalf("prompt missing text: %q", runner.prompt)
+	}
+	if !strings.Contains(runner.prompt, "Attached image") || !strings.Contains(runner.prompt, ".png") {
+		t.Fatalf("prompt missing image path: %q", runner.prompt)
+	}
+	if len(runner.opts.Images) != 1 {
+		t.Fatalf("expected --image path, got %#v", runner.opts.Images)
+	}
+	if _, err := os.Stat(runner.opts.Images[0]); err == nil {
+		t.Fatalf("attachment should be cleaned up after request: %s", runner.opts.Images[0])
 	}
 }
 

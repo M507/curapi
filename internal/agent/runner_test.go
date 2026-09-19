@@ -93,6 +93,11 @@ func TestBuildArgs(t *testing.T) {
 	if !found {
 		t.Fatalf("%v", args)
 	}
+	args = buildArgs(Options{Model: "auto", Images: []string{"/tmp/a.png", "", "/tmp/b.jpg"}})
+	joined = strings.Join(args, " ")
+	if !strings.Contains(joined, "--image /tmp/a.png") || !strings.Contains(joined, "--image /tmp/b.jpg") {
+		t.Fatalf("missing --image flags: %v", args)
+	}
 }
 
 func TestMergeEnvReplacesKey(t *testing.T) {
