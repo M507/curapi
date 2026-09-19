@@ -96,6 +96,8 @@ See [`env.json.example`](./env.json.example):
 | `log_format` | `text` or `json`. |
 | `log_file` | Override log path. Default `~/.curapi/server.log`. |
 | `request_timeout_ms` | Per-request timeout for the CLI subprocess. |
+| `max_body_bytes` | Max JSON body size (includes base64 images). |
+| `max_concurrent_agents` | Max agent CLI processes at once (default `16`). Extra requests wait until a slot frees or the request times out. Use `-1` for unlimited. |
 | `debug` | Extra CLI stream logging. |
 | `tls` | Serve HTTPS. Default `true`. |
 | `tls_auto` | Generate a self-signed cert (ECDSA P-256, 1 year) if missing or near expiry. |
@@ -261,7 +263,9 @@ Client  →  POST /v1/chat/completions (OpenAI format + Bearer token)
         →  AI response → OpenAI format → Client
 ```
 
-Image attachments (`image_url` / Responses `input_image`, including `data:` URLs) are written under `~/.curapi/attachments/`, referenced in the CLI prompt, and passed with `--image`. Temp files are deleted when the request finishes.
+Image attachments (`image_url` / Responses `input_image`, including `data:` URLs) are written under a per-request workspace in `~/.curapi/workspaces/`, referenced in the CLI prompt, and passed with `--image`. Each request also gets its own `--workspace` / `--data-dir` so concurrent users run isolated agent processes. Temp dirs are deleted when the request finishes.
+
+Concurrency: the HTTP server handles requests in parallel (Go goroutines). `max_concurrent_agents` caps how many `agent` subprocesses may run at once.
 
 ## Development
 

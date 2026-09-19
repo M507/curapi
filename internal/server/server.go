@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -28,16 +29,18 @@ import (
 )
 
 type Server struct {
-	cfg     config.Config
-	log     *slog.Logger
-	auth    auth.Authenticator
-	runner  agent.Runner
-	media   *media.Store
-	http    *http.Server
-	https   *http.Server
-	models  atomic.Value
-	cliVer  atomic.Value
-	started time.Time
+	cfg          config.Config
+	log          *slog.Logger
+	auth         auth.Authenticator
+	runner       agent.Runner
+	media        *media.Store
+	http         *http.Server
+	https        *http.Server
+	models       atomic.Value
+	cliVer       atomic.Value
+	started      time.Time
+	agentSlots   chan struct{}
+	activeAgents atomic.Int64
 }
 
 type Options struct {
@@ -65,6 +68,12 @@ func New(opts Options) *Server {
 		runner:  opts.Runner,
 		media:   opts.Media,
 		started: time.Now(),
+	}
+	if n := opts.Config.MaxConcurrentAgents; n > 0 {
+		s.agentSlots = make(chan struct{}, n)
+		s.log.Info("agent concurrency enabled", "max_concurrent_agents", n)
+	} else {
+		s.log.Info("agent concurrency unlimited")
 	}
 	s.cliVer.Store("unknown")
 	s.models.Store(openai.MergeModelIDs(nil))
@@ -323,25 +332,35 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cli := openai.OpenAIToCLI(req)
-	prompt, images, cleanup, err := s.preparePrompt(reqID, cli)
+	sess, err := s.prepareSession(reqID, cli)
 	if err != nil {
-		s.log.Error("attachments", "id", reqID, "err", err)
-		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_image"))
+		s.log.Error("session setup", "id", reqID, "err", err)
+		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_session"))
 		return
 	}
-	defer cleanup()
-
-	s.log.Info("chat", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(images))
+	defer sess.Cleanup()
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeoutMS)*time.Millisecond)
 	defer cancel()
 
-	events := s.runner.Run(ctx, prompt, agent.Options{
-		Model:   cli.Model,
-		APIKey:  s.cfg.CursorAPIKey,
-		Bin:     s.cfg.AgentBin,
-		Timeout: time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
-		Images:  images,
+	release, err := s.acquireAgentSlot(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, openai.NewError("too many concurrent agent requests; try again shortly", "server_error", "agent_busy"))
+		return
+	}
+	defer release()
+
+	s.log.Info("chat", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(sess.Images), "active_agents", s.activeAgents.Load())
+
+	events := s.runner.Run(ctx, sess.Prompt, agent.Options{
+		Model:     cli.Model,
+		APIKey:    s.cfg.CursorAPIKey,
+		Bin:       s.cfg.AgentBin,
+		Timeout:   time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
+		Images:    sess.Images,
+		Workspace: sess.Workspace,
+		DataDir:   sess.DataDir,
+		Trust:     true,
 	})
 
 	if req.Stream {
@@ -373,24 +392,35 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cli := openai.OpenAIToCLI(chat)
-	prompt, images, cleanup, err := s.preparePrompt(reqID, cli)
+	sess, err := s.prepareSession(reqID, cli)
 	if err != nil {
-		s.log.Error("attachments", "id", reqID, "err", err)
-		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_image"))
+		s.log.Error("session setup", "id", reqID, "err", err)
+		writeJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error", "invalid_session"))
 		return
 	}
-	defer cleanup()
-
-	s.log.Info("responses", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(images))
+	defer sess.Cleanup()
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.cfg.RequestTimeoutMS)*time.Millisecond)
 	defer cancel()
-	events := s.runner.Run(ctx, prompt, agent.Options{
-		Model:   cli.Model,
-		APIKey:  s.cfg.CursorAPIKey,
-		Bin:     s.cfg.AgentBin,
-		Timeout: time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
-		Images:  images,
+
+	release, err := s.acquireAgentSlot(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, openai.NewError("too many concurrent agent requests; try again shortly", "server_error", "agent_busy"))
+		return
+	}
+	defer release()
+
+	s.log.Info("responses", "id", reqID, "model", req.Model, "cli_model", cli.Model, "stream", req.Stream, "images", len(sess.Images), "active_agents", s.activeAgents.Load())
+
+	events := s.runner.Run(ctx, sess.Prompt, agent.Options{
+		Model:     cli.Model,
+		APIKey:    s.cfg.CursorAPIKey,
+		Bin:       s.cfg.AgentBin,
+		Timeout:   time.Duration(s.cfg.RequestTimeoutMS) * time.Millisecond,
+		Images:    sess.Images,
+		Workspace: sess.Workspace,
+		DataDir:   sess.DataDir,
+		Trust:     true,
 	})
 	if req.Stream {
 		s.writeResponsesStream(w, r, reqID, cli.Model, events)
@@ -613,23 +643,96 @@ type ctxKey int
 
 const ctxKeyRequestID ctxKey = 1
 
-func (s *Server) preparePrompt(reqID string, cli openai.CLIInput) (prompt string, images []string, cleanup func(), err error) {
-	cleanup = func() {}
-	prompt = cli.Prompt
+type agentSession struct {
+	Prompt    string
+	Images    []string
+	Workspace string
+	DataDir   string
+	Cleanup   func()
+}
+
+func (s *Server) acquireAgentSlot(ctx context.Context) (release func(), err error) {
+	release = func() {}
+	if s.agentSlots == nil {
+		s.activeAgents.Add(1)
+		return func() { s.activeAgents.Add(-1) }, nil
+	}
+	select {
+	case s.agentSlots <- struct{}{}:
+		s.activeAgents.Add(1)
+		return func() {
+			<-s.agentSlots
+			s.activeAgents.Add(-1)
+		}, nil
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("timed out waiting for an available agent slot")
+		}
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Server) prepareSession(reqID string, cli openai.CLIInput) (agentSession, error) {
+	noop := agentSession{Prompt: cli.Prompt, Cleanup: func() {}}
+	root := filepath.Join(s.cfg.StateDir, "workspaces")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return noop, err
+	}
+	ws, err := os.MkdirTemp(root, sanitizeSessionID(reqID)+"-*")
+	if err != nil {
+		return noop, err
+	}
+	dataDir := filepath.Join(ws, ".curapi-agent-data")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		_ = os.RemoveAll(ws)
+		return noop, err
+	}
+
+	sess := agentSession{
+		Prompt:    cli.Prompt,
+		Workspace: ws,
+		DataDir:   dataDir,
+		Cleanup:   func() { _ = os.RemoveAll(ws) },
+	}
+
 	if len(cli.ImageURLs) == 0 {
-		return prompt, nil, cleanup, nil
+		return sess, nil
 	}
 	if s.media == nil {
-		return "", nil, cleanup, fmt.Errorf("image attachments are not configured")
+		sess.Cleanup()
+		return noop, fmt.Errorf("image attachments are not configured")
 	}
-	sess, err := s.media.Materialize(reqID, cli.ImageURLs)
+	store := media.NewStore(filepath.Join(ws, "attachments"))
+	imgSess, err := store.Materialize(reqID, cli.ImageURLs)
 	if err != nil {
-		return "", nil, cleanup, fmt.Errorf("failed to materialize image attachment: %w", err)
+		sess.Cleanup()
+		return noop, fmt.Errorf("failed to materialize image attachment: %w", err)
 	}
-	cleanup = sess.Cleanup
-	prompt = openai.AppendImagePaths(cli.Prompt, sess.Paths)
-	s.log.Info("attachments ready", "id", reqID, "count", len(sess.Paths), "dir", sess.Dir)
-	return prompt, sess.Paths, cleanup, nil
+	sess.Images = imgSess.Paths
+	sess.Prompt = openai.AppendImagePaths(cli.Prompt, imgSess.Paths)
+	s.log.Info("session ready", "id", reqID, "workspace", ws, "images", len(imgSess.Paths))
+	return sess, nil
+}
+
+func sanitizeSessionID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "req"
+	}
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := b.String()
+	if len(out) > 24 {
+		out = out[:24]
+	}
+	return out
 }
 
 func requestIDFrom(ctx context.Context) string {

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -409,9 +410,99 @@ func TestChatWithImageAttachment(t *testing.T) {
 	if len(runner.opts.Images) != 1 {
 		t.Fatalf("expected --image path, got %#v", runner.opts.Images)
 	}
+	if runner.opts.Workspace == "" || runner.opts.DataDir == "" || !runner.opts.Trust {
+		t.Fatalf("expected isolated workspace opts, got %#v", runner.opts)
+	}
 	if _, err := os.Stat(runner.opts.Images[0]); err == nil {
 		t.Fatalf("attachment should be cleaned up after request: %s", runner.opts.Images[0])
 	}
+	if _, err := os.Stat(runner.opts.Workspace); err == nil {
+		t.Fatalf("workspace should be cleaned up after request: %s", runner.opts.Workspace)
+	}
+}
+
+func TestConcurrentChatRequests(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	runner := &blockingRunner{started: started, release: release}
+	cfg := config.Default()
+	cfg.AuthRequired = true
+	cfg.AuthzTokens = []string{"test-token"}
+	cfg.SkipCLICheck = true
+	cfg.StateDir = t.TempDir()
+	cfg.MaxConcurrentAgents = 2
+	s := New(Options{
+		Config: cfg,
+		Log:    logger.Discard(),
+		Auth:   auth.New(true, cfg.AuthzTokens),
+		Runner: runner,
+	})
+
+	done := make(chan int, 2)
+	launch := func() {
+		body := `{"model":"auto","messages":[{"role":"user","content":"hi"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer test-token")
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		done <- rec.Code
+	}
+	go launch()
+	go launch()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("agents did not start concurrently")
+		}
+	}
+	if got := s.activeAgents.Load(); got != 2 {
+		t.Fatalf("active_agents=%d want 2", got)
+	}
+	close(release)
+	for i := 0; i < 2; i++ {
+		select {
+		case code := <-done:
+			if code != http.StatusOK {
+				t.Fatalf("status %d", code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("request did not finish")
+		}
+	}
+	if workspaces := runner.workspaces(); len(workspaces) != 2 || workspaces[0] == workspaces[1] {
+		t.Fatalf("expected distinct workspaces, got %v", workspaces)
+	}
+}
+
+type blockingRunner struct {
+	mu         sync.Mutex
+	started    chan struct{}
+	release    chan struct{}
+	workspace  []string
+}
+
+func (b *blockingRunner) Run(_ context.Context, _ string, opts agent.Options) <-chan agent.Event {
+	b.mu.Lock()
+	b.workspace = append(b.workspace, opts.Workspace)
+	b.mu.Unlock()
+	ch := make(chan agent.Event, 1)
+	go func() {
+		defer close(ch)
+		b.started <- struct{}{}
+		<-b.release
+		ch <- agent.Event{Type: agent.EventResult, Text: "ok", Model: "auto"}
+	}()
+	return ch
+}
+
+func (b *blockingRunner) workspaces() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, len(b.workspace))
+	copy(out, b.workspace)
+	return out
 }
 
 func TestChatAgentError(t *testing.T) {

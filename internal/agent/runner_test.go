@@ -93,10 +93,13 @@ func TestBuildArgs(t *testing.T) {
 	if !found {
 		t.Fatalf("%v", args)
 	}
-	args = buildArgs(Options{Model: "auto", Images: []string{"/tmp/a.png", "", "/tmp/b.jpg"}})
+	args = buildArgs(Options{Model: "auto", Images: []string{"/tmp/a.png", "", "/tmp/b.jpg"}, Workspace: "/tmp/ws", DataDir: "/tmp/data", Trust: true})
 	joined = strings.Join(args, " ")
 	if !strings.Contains(joined, "--image /tmp/a.png") || !strings.Contains(joined, "--image /tmp/b.jpg") {
 		t.Fatalf("missing --image flags: %v", args)
+	}
+	if !strings.Contains(joined, "--workspace /tmp/ws") || !strings.Contains(joined, "--data-dir /tmp/data") || !strings.Contains(joined, "--trust") {
+		t.Fatalf("missing isolation flags: %v", args)
 	}
 }
 

@@ -45,6 +45,12 @@ type Options struct {
 	// Images are absolute paths passed to the CLI via repeated --image flags
 	// (headless attachment) in addition to being referenced in the prompt.
 	Images []string
+	// Workspace is passed as --workspace so each request gets an isolated project root.
+	Workspace string
+	// DataDir is passed as --data-dir to keep per-request Cursor metadata separate.
+	DataDir string
+	// Trust passes --trust so headless runs do not block on workspace prompts.
+	Trust bool
 }
 
 type Runner interface {
@@ -102,8 +108,12 @@ func (r *CLIRunner) execute(ctx context.Context, prompt string, opts Options, ou
 
 	args := buildArgs(opts)
 	cmd := r.Command(ctx, bin, args...)
-	if opts.CWD != "" {
-		cmd.Dir = opts.CWD
+	cwd := opts.CWD
+	if cwd == "" {
+		cwd = opts.Workspace
+	}
+	if cwd != "" {
+		cmd.Dir = cwd
 	}
 	cmd.Env = mergeEnv(opts)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -258,8 +268,17 @@ func buildArgs(opts Options) []string {
 		"--stream-partial-output",
 		"--yolo",
 	}
+	if opts.Trust {
+		args = append(args, "--trust")
+	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+	if ws := strings.TrimSpace(opts.Workspace); ws != "" {
+		args = append(args, "--workspace", ws)
+	}
+	if dir := strings.TrimSpace(opts.DataDir); dir != "" {
+		args = append(args, "--data-dir", dir)
 	}
 	for _, img := range opts.Images {
 		img = strings.TrimSpace(img)

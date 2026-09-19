@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	AppName          = "curapi"
-	DefaultPort      = 4646
-	DefaultTLSPort   = 4647
-	DefaultHost      = "127.0.0.1"
-	DefaultTimeoutMS = 300_000
-	DefaultMaxBody   = 10 << 20
+	AppName               = "curapi"
+	DefaultPort           = 4646
+	DefaultTLSPort        = 4647
+	DefaultHost           = "127.0.0.1"
+	DefaultTimeoutMS      = 300_000
+	DefaultMaxBody        = 10 << 20
+	DefaultMaxConcurrent  = 16
 )
 
 // Config is the on-disk configuration. Secrets live only in env.json
@@ -35,17 +36,18 @@ type Config struct {
 	LogLevel         string   `json:"log_level"`
 	LogFormat        string   `json:"log_format"`
 	LogFile          string   `json:"log_file"`
-	RequestTimeoutMS int      `json:"request_timeout_ms"`
-	MaxBodyBytes     int64    `json:"max_body_bytes"`
-	CORSAllowOrigin  string   `json:"cors_allow_origin"`
-	Debug            bool     `json:"debug"`
-	SkipCLICheck     bool     `json:"skip_cli_check"`
-	StateDir         string   `json:"state_dir,omitempty"`
-	TLS              bool     `json:"tls"`
-	TLSAuto          bool     `json:"tls_auto"`
-	TLSCertFile      string   `json:"tls_cert_file"`
-	TLSKeyFile       string   `json:"tls_key_file"`
-	TLSHosts         []string `json:"tls_hosts"`
+	RequestTimeoutMS    int      `json:"request_timeout_ms"`
+	MaxBodyBytes        int64    `json:"max_body_bytes"`
+	MaxConcurrentAgents int      `json:"max_concurrent_agents"`
+	CORSAllowOrigin     string   `json:"cors_allow_origin"`
+	Debug               bool     `json:"debug"`
+	SkipCLICheck        bool     `json:"skip_cli_check"`
+	StateDir            string   `json:"state_dir,omitempty"`
+	TLS                 bool     `json:"tls"`
+	TLSAuto             bool     `json:"tls_auto"`
+	TLSCertFile         string   `json:"tls_cert_file"`
+	TLSKeyFile          string   `json:"tls_key_file"`
+	TLSHosts            []string `json:"tls_hosts"`
 
 	// Path is the file this config was loaded from (not serialized).
 	Path string `json:"-"`
@@ -61,11 +63,12 @@ func Default() Config {
 		AgentBin:         "agent",
 		LogLevel:         "info",
 		LogFormat:        "text",
-		RequestTimeoutMS: DefaultTimeoutMS,
-		MaxBodyBytes:     DefaultMaxBody,
-		CORSAllowOrigin:  "*",
-		TLS:              true,
-		TLSAuto:          true,
+		RequestTimeoutMS:    DefaultTimeoutMS,
+		MaxBodyBytes:        DefaultMaxBody,
+		MaxConcurrentAgents: DefaultMaxConcurrent,
+		CORSAllowOrigin:     "*",
+		TLS:                 true,
+		TLSAuto:             true,
 	}
 }
 
@@ -224,6 +227,10 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxBodyBytes <= 0 {
 		c.MaxBodyBytes = DefaultMaxBody
+	}
+	// 0 → default cap; negative → unlimited (no semaphore).
+	if c.MaxConcurrentAgents == 0 {
+		c.MaxConcurrentAgents = DefaultMaxConcurrent
 	}
 	if strings.TrimSpace(c.CORSAllowOrigin) == "" {
 		c.CORSAllowOrigin = "*"
